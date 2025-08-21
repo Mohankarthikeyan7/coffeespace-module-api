@@ -1,0 +1,74 @@
+name: Backend CI/CD to EC2 (with Postgres)
+
+on:
+  push:
+    branches: ["master"] #branch
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      BACKEND_DIR: coffeespace-module-api
+      IMAGE_NAME: coffeespace-backend
+      APP_DIR: ~/app
+      EC2_USER: ubuntu
+
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build backend Docker image
+        run: docker build -t ${{ env.IMAGE_NAME }}:latest ${{ env.BACKEND_DIR }}
+
+      - name: Save image to TAR
+        run: docker save ${{ env.IMAGE_NAME }}:latest -o backend.tar
+
+      - name: Make deploy script executable
+        run: chmod +x deploy.sh
+
+      - name: Copy artifacts to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || env.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "backend.tar,docker-compose.yml,deploy.sh"
+          target: ${{ env.APP_DIR }}
+
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || env.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            APP_DIR="${{ env.APP_DIR }}"
+            mkdir -p "$APP_DIR"
+            cd "$APP_DIR"
+
+            # Export secrets as environment variables
+            export POSTGRES_DB="${{ secrets.POSTGRES_DB }}"
+            export POSTGRES_USER="${{ secrets.POSTGRES_USER }}"
+            export POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}"
+
+            # Install Docker if missing
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo apt-get update -y
+              sudo apt-get install -y docker.io
+            fi
+
+            # Install Compose plugin if missing
+            if ! docker compose version >/dev/null 2>&1; then
+              sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose
+            fi
+
+            # Make deploy script executable on EC2
+            chmod +x deploy.sh
+
+            # Run the deploy script
+            ./deploy.sh

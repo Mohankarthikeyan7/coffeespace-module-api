@@ -25,6 +25,12 @@ jobs:
       - name: Save image to TAR
         run: docker save ${{ env.IMAGE_NAME }}:latest -o backend.tar
 
+      - name: Fix file permissions
+        run: chmod 644 backend.tar docker-compose.yml deploy.sh
+
+      - name: Fix PEM permissions
+        run: chmod 600 ./coffeespace.pem
+
       - name: Copy artifacts to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
